@@ -5,6 +5,7 @@ import org.Little_100.projecte.alchemicalbag.AlchemicalBagManager;
 import org.Little_100.projecte.armor.ArmorManager;
 import org.Little_100.projecte.command.CustomCommand;
 import org.Little_100.projecte.compatibility.GeyserAdapter;
+import org.Little_100.projecte.compatibility.PlaceholderAPIExpansion;
 import org.Little_100.projecte.compatibility.scheduler.SchedulerAdapter;
 import org.Little_100.projecte.compatibility.version.VersionAdapter;
 import org.Little_100.projecte.devices.*;
@@ -69,6 +70,7 @@ public final class ProjectE extends JavaPlugin {
     private ArmorManager armorManager;
     private ArmorListener armorListener;
     private GeyserAdapter geyserAdapter;
+    private PlaceholderAPIExpansion placeholderAPIExpansion;
     private org.Little_100.projecte.listeners.PdcItemDebugGUIListener pdcItemDebugGUIListener;
     private FileConfiguration devicesConfig;
     private FileConfiguration opItemConfig;
@@ -330,11 +332,25 @@ public final class ProjectE extends JavaPlugin {
             getServer().getPluginManager().registerEvents(new GeyserPlayerJoinListener(this), this);
         }
 
+        // 初始化 PlaceholderAPI 扩展
+        if (getServer().getPluginManager().getPlugin("PlaceholderAPI") != null) {
+            placeholderAPIExpansion = new PlaceholderAPIExpansion(this);
+            placeholderAPIExpansion.register();
+            getLogger().info("PlaceholderAPI expansion registered successfully!");
+        } else {
+            getLogger().info("PlaceholderAPI not found, skipping expansion registration.");
+        }
+
         getServer().getPluginManager().registerEvents(new DeviceListener(this), this);
     }
 
     @Override
     public void onDisable() {
+        // 注销PlaceholderAPI扩展
+        if (placeholderAPIExpansion != null) {
+            placeholderAPIExpansion.unregister();
+        }
+
         // 注销所有自定义配方
         if (recipeManager != null) {
             recipeManager.unregisterAllRecipes();

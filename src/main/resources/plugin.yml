@@ -6,6 +6,7 @@ folia-supported: true
 authors: [ Little_100 ]
 description: ProjectE插件(原名贤者之石插件但是突然感觉性质变了就改名ProjectE了)
 website: little100.top
+softdepend: [ PlaceholderAPI ]
 commands:
   projecte:
     description: "ProjectE插件主命令"
