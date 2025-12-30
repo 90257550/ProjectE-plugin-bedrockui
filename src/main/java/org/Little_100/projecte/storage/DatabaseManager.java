@@ -43,8 +43,38 @@ public class DatabaseManager {
 
     private void createTables() {
         try (Statement statement = connection.createStatement()) {
-            statement.execute(
-                    "CREATE TABLE IF NOT EXISTS emc_values (" + "item_key TEXT PRIMARY KEY," + "emc BIGINT NOT NULL);");
+            // 检查emc_values表是否存在locked列
+            boolean hasLockedColumn = false;
+            try {
+                ResultSet rs = statement.executeQuery("PRAGMA table_info(emc_values)");
+                while (rs.next()) {
+                    if ("locked".equals(rs.getString("name"))) {
+                        hasLockedColumn = true;
+                        break;
+                    }
+                }
+            } catch (SQLException ignored) {
+            }
+
+            if (!hasLockedColumn) {
+                // 如果表存在但没有locked列，需要添加
+                try {
+                    statement.execute("ALTER TABLE emc_values ADD COLUMN locked INTEGER NOT NULL DEFAULT 0;");
+                } catch (SQLException e) {
+                    // 表可能不存在，创建新表
+                    statement.execute(
+                            "CREATE TABLE IF NOT EXISTS emc_values (" 
+                            + "item_key TEXT PRIMARY KEY," 
+                            + "emc BIGINT NOT NULL,"
+                            + "locked INTEGER NOT NULL DEFAULT 0);");
+                }
+            } else {
+                statement.execute(
+                        "CREATE TABLE IF NOT EXISTS emc_values (" 
+                        + "item_key TEXT PRIMARY KEY," 
+                        + "emc BIGINT NOT NULL,"
+                        + "locked INTEGER NOT NULL DEFAULT 0);");
+            }
 
             statement.execute("CREATE TABLE IF NOT EXISTS player_emc (" + "player_uuid TEXT PRIMARY KEY,"
                     + "emc BIGINT NOT NULL);");
@@ -80,14 +110,39 @@ public class DatabaseManager {
     }
 
     public void setEmc(String itemKey, long emc) {
-        String sql = "INSERT OR REPLACE INTO emc_values (item_key, emc) VALUES (?, ?);";
+        setEmc(itemKey, emc, false);
+    }
+
+    /**
+     * 设置物品的EMC值
+     * @param itemKey 物品键
+     * @param emc EMC值
+     * @param locked 是否锁定
+     */
+    public void setEmc(String itemKey, long emc, boolean locked) {
+        String sql = "INSERT OR REPLACE INTO emc_values (item_key, emc, locked) VALUES (?, ?, ?);";
         try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
             pstmt.setString(1, itemKey);
             pstmt.setLong(2, emc);
+            pstmt.setInt(3, locked ? 1 : 0);
             pstmt.executeUpdate();
         } catch (SQLException e) {
             e.printStackTrace();
         }
+    }
+
+    /**
+     * 设置物品的EMC值
+     * @param itemKey 物品键
+     * @param emc EMC值
+     * @return 是否成功设置
+     */
+    public boolean setEmcIfNotLocked(String itemKey, long emc) {
+        if (isEmcLocked(itemKey)) {
+            return false;
+        }
+        setEmc(itemKey, emc, false);
+        return true;
     }
 
     public long getEmc(String itemKey) {
@@ -104,6 +159,42 @@ public class DatabaseManager {
         return 0;
     }
 
+    /**
+     * 检查物品的EMC值是否被锁定
+     * @param itemKey 物品键
+     * @return 是否被锁定
+     */
+    public boolean isEmcLocked(String itemKey) {
+        String sql = "SELECT locked FROM emc_values WHERE item_key = ?;";
+        try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+            pstmt.setString(1, itemKey);
+            ResultSet rs = pstmt.executeQuery();
+            if (rs.next()) {
+                return rs.getInt("locked") == 1;
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return false;
+    }
+
+    /**
+     * 检查物品是否已有EMC值记录
+     * @param itemKey 物品键
+     * @return 是否存在记录
+     */
+    public boolean hasEmcRecord(String itemKey) {
+        String sql = "SELECT 1 FROM emc_values WHERE item_key = ?;";
+        try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+            pstmt.setString(1, itemKey);
+            ResultSet rs = pstmt.executeQuery();
+            return rs.next();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return false;
+    }
+
     public boolean hasEmcValues() {
         String sql = "SELECT 1 FROM emc_values LIMIT 1;";
         try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
@@ -117,6 +208,18 @@ public class DatabaseManager {
 
     public void clearEmcValues() {
         String sql = "DELETE FROM emc_values;";
+        try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * 清除未锁定的EMC值
+     */
+    public void clearUnlockedEmcValues() {
+        String sql = "DELETE FROM emc_values WHERE locked = 0;";
         try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
             pstmt.executeUpdate();
         } catch (SQLException e) {

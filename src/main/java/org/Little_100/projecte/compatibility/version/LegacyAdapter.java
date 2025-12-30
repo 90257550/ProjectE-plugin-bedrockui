@@ -13,6 +13,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.inventory.*;
 
 import java.util.*;
+import java.util.logging.Level;
 
 public class LegacyAdapter implements VersionAdapter {
 
@@ -118,21 +119,26 @@ public class LegacyAdapter implements VersionAdapter {
             return;
         }
 
+        // 加载默认EMC值
         List<Map<?, ?>> items = emcSection.getMapList("default");
         if (items.isEmpty()) {
             ProjectE.getInstance().getLogger().warning("'default' EMC list is missing or empty in config.yml");
             return;
         }
 
+        ProjectE.getInstance()
+                .getLogger()
+                .info("Loading " + items.size() + " EMC entries from config's default list...");
+
         for (Map<?, ?> itemMap : items) {
             for (Map.Entry<?, ?> entry : itemMap.entrySet()) {
-                if (entry.getKey() instanceof String && entry.getValue() instanceof Number) {
-                    String itemKey = (String) entry.getKey();
-                    long emc = ((Number) entry.getValue()).longValue();
+                try {
+                    if (entry.getKey() instanceof String && entry.getValue() instanceof Number) {
+                        String itemKey = (String) entry.getKey();
+                        long emc = ((Number) entry.getValue()).longValue();
 
-                    if (emc > 0) {
                         if (getMaterial(itemKey) != null) {
-                            databaseManager.setEmc("minecraft:" + itemKey.toLowerCase(), emc);
+                            databaseManager.setEmc("minecraft:" + itemKey.toLowerCase(), emc, true);
                         } else {
                             ProjectE.getInstance()
                                     .getLogger()
@@ -140,6 +146,52 @@ public class LegacyAdapter implements VersionAdapter {
                                             "Item '" + itemKey
                                                     + "' from 'default' EMC list not found in this Minecraft version. Skipping.");
                         }
+                    }
+                } catch (Exception e) {
+                    ProjectE.getInstance()
+                            .getLogger()
+                            .log(Level.SEVERE, "Failed to process an EMC entry: " + entry.toString(), e);
+                }
+            }
+        }
+        
+        List<Map<?, ?>> lockedItems = emcSection.getMapList("locked");
+        if (lockedItems != null && !lockedItems.isEmpty()) {
+            ProjectE.getInstance()
+                    .getLogger()
+                    .info("Loading " + lockedItems.size() + " locked EMC entries from config...");
+
+            for (Map<?, ?> itemMap : lockedItems) {
+                if (itemMap == null) {
+                    continue;
+                }
+                for (Map.Entry<?, ?> entry : itemMap.entrySet()) {
+                    try {
+                        String configKey = entry.getKey().toString();
+
+                        if (!(entry.getValue() instanceof Number)) {
+                            ProjectE.getInstance()
+                                    .getLogger()
+                                    .warning("Invalid locked EMC value for '" + configKey + "': not a number. Skipping.");
+                            continue;
+                        }
+
+                        Material material = getMaterial(configKey);
+                        if (material == null) {
+                            continue;
+                        }
+                        String correctItemKey = "minecraft:" + configKey.toLowerCase();
+                        long emc = ((Number) entry.getValue()).longValue();
+
+                        // 锁定的EMC值，不会被配方计算覆盖
+                        databaseManager.setEmc(correctItemKey, emc, true);
+                        ProjectE.getInstance()
+                                .getLogger()
+                                .info("Locked EMC for " + correctItemKey + ": " + emc);
+                    } catch (Exception e) {
+                        ProjectE.getInstance()
+                                .getLogger()
+                                .log(Level.SEVERE, "Failed to process a locked EMC entry: " + entry.toString(), e);
                     }
                 }
             }

@@ -66,6 +66,27 @@ TransmutationTable:
       # this part is provided by gemini2.5pro, and will be continued to be added by Little100.
       # 非常不建议您修改此处
       # it is highly recommended not to modify this part.
+      
+      # ==================== 锁定的EMC值 ====================
+      # Locked EMC values - 这些物品的EMC值不会被配方计算覆盖
+      # These items' EMC values will NOT be overwritten by recipe calculation
+      # 
+      # 例如：如果你设置 iron_ingot: 0，铁锭将无法在转换桌中使用
+      #
+      # Example: If you set iron_ingot: 0, iron ingot cannot be used in transmutation table
+      # =====================================================
+      locked:
+        # 默认为空，如需禁止某些物品转换，请取消下面的注释并修改
+        # Default is empty. To disable conversion for certain items, uncomment and modify below
+        # - iron_ingot: 0      # 禁止铁锭转换 / Disable iron ingot conversion
+        # - iron_nugget: 0     # 禁止铁粒转换 / Disable iron nugget conversion
+        # - iron_block: 0      # 禁止铁块转换 / Disable iron block conversion
+        # - iron_ore: 0        # 禁止铁矿转换 / Disable iron ore conversion
+        # - deepslate_iron_ore: 0  # 禁止深层铁矿转换 / Disable deepslate iron ore conversion
+        # - raw_iron: 0        # 禁止粗铁转换 / Disable raw iron conversion
+        # - raw_iron_block: 0  # 禁止粗铁块转换 / Disable raw iron block conversion
+        # - diamond: 16384     # 设置钻石为固定值16384 / Set diamond to fixed value 16384
+      
       default:
         - bundle: 0
         # Blocks

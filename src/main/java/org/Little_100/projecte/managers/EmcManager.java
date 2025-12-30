@@ -27,6 +27,8 @@ public class EmcManager {
     // 内存缓存,避免频繁查询数据库和遍历配方
     // issue 11 但不保证有效
     private final Map<String, Long> emcCache = new HashMap<>();
+    // 锁定状态缓存
+    private final Set<String> lockedItems = new HashSet<>();
 
     public EmcManager(ProjectE plugin) {
         this.plugin = plugin;
@@ -53,9 +55,11 @@ public class EmcManager {
             return;
         }
         if (forceRecalculate) {
-            databaseManager.clearEmcValues();
+            // 只清除未锁定的EMC值，保留锁定的值
+            databaseManager.clearUnlockedEmcValues();
             // 清空缓存
             emcCache.clear();
+            lockedItems.clear();
         }
         plugin.getLogger().info("Start calculating EMC values...");
         versionAdapter.loadInitialEmcValues();
@@ -106,6 +110,12 @@ public class EmcManager {
         }
 
         String resultKey = getItemKey(result);
+        
+        // 检查物品是否被锁定，如果被锁定则跳过配方计算
+        if (isEmcLocked(resultKey)) {
+            return false;
+        }
+        
         long existingEmc = getEmc(resultKey);
         long newEmc = versionAdapter.calculateRecipeEmc(recipe, divisionStrategy);
 
@@ -114,37 +124,60 @@ public class EmcManager {
         }
 
         if (existingEmc <= 0) {
-            databaseManager.setEmc(resultKey, newEmc);
-            // 更新缓存
-            emcCache.put(resultKey, newEmc);
-            Map<String, String> placeholders = new HashMap<>();
-            placeholders.put("item", resultKey);
-            placeholders.put("emc", String.valueOf(newEmc));
-            Debug.log("debug.emc.item_emc_info", placeholders);
-            return true;
+            // 使用 setEmcIfNotLocked 确保不会覆盖锁定的值
+            if (databaseManager.setEmcIfNotLocked(resultKey, newEmc)) {
+                // 更新缓存
+                emcCache.put(resultKey, newEmc);
+                Map<String, String> placeholders = new HashMap<>();
+                placeholders.put("item", resultKey);
+                placeholders.put("emc", String.valueOf(newEmc));
+                Debug.log("debug.emc.item_emc_info", placeholders);
+                return true;
+            }
+            return false;
         } else {
             boolean updated = false;
             if ("lowest".equals(recipeConflictStrategy) && newEmc < existingEmc) {
-                databaseManager.setEmc(resultKey, newEmc);
-                // 更新缓存
-                emcCache.put(resultKey, newEmc);
-                Map<String, String> placeholders = new HashMap<>();
-                placeholders.put("item", resultKey);
-                placeholders.put("emc", String.valueOf(newEmc));
-                Debug.log("debug.emc.item_emc_info", placeholders);
-                updated = true;
+                if (databaseManager.setEmcIfNotLocked(resultKey, newEmc)) {
+                    // 更新缓存
+                    emcCache.put(resultKey, newEmc);
+                    Map<String, String> placeholders = new HashMap<>();
+                    placeholders.put("item", resultKey);
+                    placeholders.put("emc", String.valueOf(newEmc));
+                    Debug.log("debug.emc.item_emc_info", placeholders);
+                    updated = true;
+                }
             } else if ("highest".equals(recipeConflictStrategy) && newEmc > existingEmc) {
-                databaseManager.setEmc(resultKey, newEmc);
-                // 更新缓存
-                emcCache.put(resultKey, newEmc);
-                Map<String, String> placeholders = new HashMap<>();
-                placeholders.put("item", resultKey);
-                placeholders.put("emc", String.valueOf(newEmc));
-                Debug.log("debug.emc.item_emc_info", placeholders);
-                updated = true;
+                if (databaseManager.setEmcIfNotLocked(resultKey, newEmc)) {
+                    // 更新缓存
+                    emcCache.put(resultKey, newEmc);
+                    Map<String, String> placeholders = new HashMap<>();
+                    placeholders.put("item", resultKey);
+                    placeholders.put("emc", String.valueOf(newEmc));
+                    Debug.log("debug.emc.item_emc_info", placeholders);
+                    updated = true;
+                }
             }
             return updated;
         }
+    }
+
+    /**
+     * 检查物品的EMC值是否被锁定
+     * @param itemKey 物品键
+     * @return 是否被锁定
+     */
+    public boolean isEmcLocked(String itemKey) {
+        // 先检查缓存
+        if (lockedItems.contains(itemKey)) {
+            return true;
+        }
+        // 查询数据库
+        boolean locked = databaseManager.isEmcLocked(itemKey);
+        if (locked) {
+            lockedItems.add(itemKey);
+        }
+        return locked;
     }
 
     public long getEmc(ItemStack item) {
@@ -184,8 +217,8 @@ public class EmcManager {
         
         // 2. 检查数据库
         long emc = databaseManager.getEmc(itemKey);
-        if (emc > 0) {
-            // 缓存到内存
+        // 注意：即使emc为0，如果数据库中有记录，也应该缓存
+        if (databaseManager.hasEmcRecord(itemKey)) {
             emcCache.put(itemKey, emc);
             return emc;
         }
@@ -441,6 +474,21 @@ public class EmcManager {
         emcCache.put(itemKey, emcValue);
     }
 
+    /**
+     * 注册EMC值并可选择锁定
+     * @param itemKey 物品键
+     * @param emcValue EMC值
+     * @param locked 是否锁定
+     */
+    public void registerEmc(String itemKey, long emcValue, boolean locked) {
+        databaseManager.setEmc(itemKey, emcValue, locked);
+        // 更新缓存
+        emcCache.put(itemKey, emcValue);
+        if (locked) {
+            lockedItems.add(itemKey);
+        }
+    }
+
     public void setEmcValue(ItemStack item, long emc) {
         if (item == null) return;
         String key = getItemKey(item);
@@ -545,6 +593,12 @@ public class EmcManager {
                     // 只处理PDC物品
                     if (isPdcItem(recipe.getResult())) {
                         String itemKey = getItemKey(recipe.getResult());
+                        
+                        // 检查是否被锁定
+                        if (isEmcLocked(itemKey)) {
+                            continue;
+                        }
+                        
                         long oldEmc = databaseManager.getEmc(itemKey);
                         
                         // 计算配方的EMC
@@ -595,13 +649,14 @@ public class EmcManager {
                             }
                             
                             if (shouldUpdate) {
-                                databaseManager.setEmc(itemKey, recipeEmc);
-                                // 更新缓存
-                                emcCache.put(itemKey, recipeEmc);
-                                changed = true;
-                                calculatedItems.add(itemKey);
-                                if (debug) {
-                                    plugin.getLogger().info("[PDC EMC Calculated] " + itemKey + " = " + recipeEmc + " EMC");
+                                if (databaseManager.setEmcIfNotLocked(itemKey, recipeEmc)) {
+                                    // 更新缓存
+                                    emcCache.put(itemKey, recipeEmc);
+                                    changed = true;
+                                    calculatedItems.add(itemKey);
+                                    if (debug) {
+                                        plugin.getLogger().info("[PDC EMC Calculated] " + itemKey + " = " + recipeEmc + " EMC");
+                                    }
                                 }
                             }
                         }
@@ -629,7 +684,7 @@ public class EmcManager {
                     && isPdcItem(recipe.getResult())) {
                     String itemKey = getItemKey(recipe.getResult());
                     long emc = databaseManager.getEmc(itemKey);
-                    if (emc <= 0) {
+                    if (emc <= 0 && !isEmcLocked(itemKey)) {
                         uncalculatedCount++;
                         if (debug) {
                             plugin.getLogger().warning("[PDC EMC] Item without EMC: " + itemKey);
@@ -650,5 +705,13 @@ public class EmcManager {
         }
         
         return calculatedItems.size();
+    }
+
+    /**
+     * 清除缓存（用于重新加载配置时）
+     */
+    public void clearCache() {
+        emcCache.clear();
+        lockedItems.clear();
     }
 }
