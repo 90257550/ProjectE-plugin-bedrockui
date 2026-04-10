@@ -173,6 +173,8 @@ public class EnergyCollectorManager {
                 BlockFace.UP, BlockFace.DOWN
         };
 
+        List<CondenserManager.CondenserState> transferTarget = new ArrayList<>();
+
         for (BlockFace face : faces) {
             Block adjacent = block.getRelative(face);
 
@@ -183,12 +185,24 @@ public class EnergyCollectorManager {
                         .getCondenserState(adjacentLocation);
 
                 if (condenserState != null) {
-                    condenserState.addEmc(data.storedEmc);
-                    data.storedEmc = 0;
-                    return;
+                    transferTarget.add(condenserState);
                 }
             }
         }
+
+        if (transferTarget.isEmpty()) {
+            return;
+        }
+
+        int count = transferTarget.size();
+        if (data.storedEmc < count) return;
+
+        long avgEmc = data.storedEmc / count;
+        for (CondenserManager.CondenserState condenserState : transferTarget) {
+            condenserState.addEmc(avgEmc);
+        }
+
+        data.storedEmc -= avgEmc * count;
     }
 
     private void saveAllCollectors() {
