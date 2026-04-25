@@ -109,7 +109,7 @@ public class DatabaseManager {
         }
     }
 
-    public void setEmc(String itemKey, long emc) {
+    public synchronized void setEmc(String itemKey, long emc) {
         setEmc(itemKey, emc, false);
     }
 
@@ -119,7 +119,7 @@ public class DatabaseManager {
      * @param emc EMC值
      * @param locked 是否锁定
      */
-    public void setEmc(String itemKey, long emc, boolean locked) {
+    public synchronized void setEmc(String itemKey, long emc, boolean locked) {
         String sql = "INSERT OR REPLACE INTO emc_values (item_key, emc, locked) VALUES (?, ?, ?);";
         try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
             pstmt.setString(1, itemKey);
@@ -145,7 +145,7 @@ public class DatabaseManager {
         return true;
     }
 
-    public long getEmc(String itemKey) {
+    public synchronized long getEmc(String itemKey) {
         String sql = "SELECT emc FROM emc_values WHERE item_key = ?;";
         try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
             pstmt.setString(1, itemKey);
@@ -183,7 +183,7 @@ public class DatabaseManager {
      * @param itemKey 物品键
      * @return 是否存在记录
      */
-    public boolean hasEmcRecord(String itemKey) {
+    public synchronized boolean hasEmcRecord(String itemKey) {
         String sql = "SELECT 1 FROM emc_values WHERE item_key = ?;";
         try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
             pstmt.setString(1, itemKey);
@@ -227,7 +227,7 @@ public class DatabaseManager {
         }
     }
 
-    public long getPlayerEmc(UUID playerUuid) {
+    public synchronized long getPlayerEmc(UUID playerUuid) {
         String sql = "SELECT emc FROM player_emc WHERE player_uuid = ?;";
         try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
             pstmt.setString(1, playerUuid.toString());
@@ -241,7 +241,7 @@ public class DatabaseManager {
         return 0;
     }
 
-    public void setPlayerEmc(UUID playerUuid, long emc) {
+    public synchronized void setPlayerEmc(UUID playerUuid, long emc) {
         String sql = "INSERT OR REPLACE INTO player_emc (player_uuid, emc) VALUES (?, ?);";
         try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
             pstmt.setString(1, playerUuid.toString());
@@ -252,7 +252,7 @@ public class DatabaseManager {
         }
     }
 
-    public void addLearnedItem(UUID playerUuid, String itemKey) {
+    public synchronized void addLearnedItem(UUID playerUuid, String itemKey) {
         String sql = "INSERT OR IGNORE INTO learned_items (player_uuid, item_key) VALUES (?, ?);";
         try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
             pstmt.setString(1, playerUuid.toString());
@@ -271,7 +271,7 @@ public class DatabaseManager {
         return true;
     }
 
-    public java.util.List<String> getLearnedItems(UUID playerUuid) {
+    public synchronized java.util.List<String> getLearnedItems(UUID playerUuid) {
         java.util.List<String> learnedItems = new java.util.ArrayList<>();
         String sql = "SELECT item_key FROM learned_items WHERE player_uuid = ?;";
         try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
@@ -286,7 +286,7 @@ public class DatabaseManager {
         return learnedItems;
     }
 
-    public boolean isLearned(UUID playerUuid, String itemKey) {
+    public synchronized boolean isLearned(UUID playerUuid, String itemKey) {
         String sql = "SELECT 1 FROM learned_items WHERE player_uuid = ? AND item_key = ? LIMIT 1;";
         try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
             pstmt.setString(1, playerUuid.toString());
