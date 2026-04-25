@@ -163,42 +163,9 @@ public class GUIListener implements Listener {
     }
 
     private long calculateItemSellEmc(ItemStack item) {
-        if (item == null || item.getType().isAir()) {
-            return 0;
-        }
-
-        EmcManager emcManager = ProjectE.getInstance().getEmcManager();
-        KleinStarManager kleinStarManager = ProjectE.getInstance().getKleinStarManager();
-        long itemEmc = emcManager.getEmc(item);
-
-        // 处理潜影盒
-        if (item.getItemMeta() instanceof BlockStateMeta
-                && ((BlockStateMeta) item.getItemMeta()).getBlockState() instanceof ShulkerBox) {
-            if (ShulkerBoxUtil.getFirstItemWithoutEmc(item) == null) {
-                return (itemEmc + ShulkerBoxUtil.getTotalEmcOfContents(item)) * item.getAmount();
-            }
-            return 0; // 如果潜影盒内有物品没有EMC，则整个潜影盒不能出售
-        }
-
-        // 处理卡莱恩之星
-        if (kleinStarManager.isKleinStar(item)) {
-            long baseEmc = emcManager.getEmc(emcManager.getItemKey(item));
-            long storedEmc = kleinStarManager.getStoredEmc(item);
-            return (baseEmc + storedEmc) * item.getAmount();
-        }
-
-        if (item.getItemMeta() instanceof Damageable) {
-            Damageable damageable = (Damageable) item.getItemMeta();
-            int maxDurability = item.getType().getMaxDurability();
-            if (maxDurability > 0) {
-                int currentDamage = damageable.getDamage();
-                double durabilityPercentage = (double) (maxDurability - currentDamage) / maxDurability;
-                long durabilityAdjustedEmc = (long) Math.max(1, itemEmc * durabilityPercentage);
-                return durabilityAdjustedEmc * item.getAmount();
-            }
-        }
-
-        return itemEmc * item.getAmount();
+        // 保留方法签名以防其他地方调用, 转发到 EmcManager 的新方法
+        // (业务逻辑已抽到 EmcManager.calculateSellEmcFor, Java 版和基岩版共用)
+        return ProjectE.getInstance().getEmcManager().calculateSellEmcFor(item);
     }
 
     private void handleBuyScreenClick(InventoryClickEvent event, TransmutationGUI gui) {
