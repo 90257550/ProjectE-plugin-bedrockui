@@ -7,7 +7,6 @@ import org.Little_100.projecte.managers.LanguageManager;
 import org.Little_100.projecte.storage.DatabaseManager;
 import org.Little_100.projecte.tools.kleinstar.KleinStarManager;
 import org.Little_100.projecte.util.ShulkerBoxUtil;
-import org.bukkit.World;
 import org.bukkit.block.ShulkerBox;
 import org.bukkit.entity.HumanEntity;
 import org.bukkit.entity.Player;
@@ -313,7 +312,7 @@ public class GUIListener implements Listener {
                     placeholders.put("item", displayName);
                     player.sendMessage(lang.get("serverside.command.generic.buy_success", placeholders));
 
-                    refreshGui(player, gui);
+                    reopenBuyTransmutationGui(player, gui);
 
                 } else {
                     player.sendMessage(ProjectE.getInstance()
@@ -431,7 +430,7 @@ public class GUIListener implements Listener {
             }
         }
 
-        refreshGui(player, gui);
+        reopenMainTransmutationGui(player);
     }
 
     private void handleLearnScreenClick(InventoryClickEvent event, TransmutationGUI gui) {
@@ -478,7 +477,6 @@ public class GUIListener implements Listener {
         for (int i = 0; i < 54; i++) {
             if (isTransactionArea(i)) {
                 ItemStack item = inventory.getItem(i);
-                World world = player.getWorld();
                 if (item != null && !item.getType().isAir()) {
                     player.getInventory().addItem(item);
                     inventory.setItem(i, null);
@@ -486,24 +484,27 @@ public class GUIListener implements Listener {
             }
         }
 
-        player.closeInventory();
+        reopenMainTransmutationGui(player);
     }
 
-    private void refreshGui(Player player, TransmutationGUI oldGui) {
-        final TransmutationGUI.GuiState state = oldGui.getCurrentState();
-        final int page = oldGui.getPage();
-        final String searchQuery = oldGui.getSearchQuery();
+    private void reopenMainTransmutationGui(Player player) {
+        ProjectE.getInstance().getSchedulerAdapter().runTask(() -> new TransmutationGUI(player).open());
+    }
 
-        player.closeInventory();
-        ProjectE.getInstance().getSchedulerAdapter().runTaskLater(() -> {
+    private void reopenBuyTransmutationGui(Player player, TransmutationGUI currentGui) {
+        int currentPage = currentGui.getPage();
+        String searchQuery = currentGui.getSearchQuery();
+        ProjectE.getInstance().getSchedulerAdapter().runTask(() -> {
             TransmutationGUI newGui = new TransmutationGUI(player);
-            newGui.setState(state);
-            newGui.setPage(page);
-            if (searchQuery != null && !searchQuery.isEmpty()) {
+            newGui.setState(TransmutationGUI.GuiState.BUY);
+            if (searchQuery != null && !searchQuery.trim().isEmpty()) {
                 newGui.setSearchQuery(searchQuery);
             }
+            if (currentPage > 0) {
+                newGui.setPage(currentPage);
+            }
             newGui.open();
-        }, 1L);
+        });
     }
 
     @EventHandler
@@ -679,7 +680,7 @@ public class GUIListener implements Listener {
             inventory.setItem(kleinStarSlot, null);
             player.getInventory().addItem(updatedKleinStar);
 
-            refreshGui(player, gui);
+            reopenMainTransmutationGui(player);
 
             Map<String, String> placeholders = new HashMap<>();
             placeholders.put("emc", String.format("%,d", amountToCharge));

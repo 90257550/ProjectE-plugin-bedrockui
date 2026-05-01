@@ -42,3 +42,9 @@ Here are the main commands for the ProjectE plugin:
 3.  The plugin will generate default configuration files in the `plugins/ProjectE/` folder.
 4.  Modify `config.yml` and `emc.yml` according to your needs.
 5.  Use the `/projecte reload` command to apply the changes.
+
+## Contributors
+
+Thanks to the following contributors for their support:
+
+- [yIllusionSky](https://github.com/yIllusionSky) — Transmutation table interaction improvements (GUI refresh logic)

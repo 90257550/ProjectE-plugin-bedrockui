@@ -49,3 +49,9 @@ ProjectE 是一个 Minecraft Spigot 插件，其灵感来源于著名的 "等价
 5.  使用 `/projecte reload` 指令应用更改。
 
 > 注意:很有可能不会继续兼容Geyser的基岩版玩家,这真的太难了,需要社区贡献...~~虽然没人用~~
+
+## 贡献者
+
+感谢以下贡献者对本项目的支持：
+
+- [yIllusionSky](https://github.com/yIllusionSky) — 转换桌交互优化（GUI 刷新逻辑改进）
