@@ -31,6 +31,7 @@ dependencies {
     compileOnly("org.spigotmc:spigot-api:1.21.4-R0.1-SNAPSHOT")
     compileOnly("dev.folia:folia-api:1.20.1-R0.1-SNAPSHOT")
     compileOnly("org.geysermc.geyser:api:2.8.3-SNAPSHOT")
+    compileOnly("org.geysermc.floodgate:api:2.2.3-SNAPSHOT")
     compileOnly("me.clip:placeholderapi:2.11.6")
     implementation("org.xerial:sqlite-jdbc:3.45.1.0")
 }
