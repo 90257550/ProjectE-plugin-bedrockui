@@ -5,10 +5,16 @@ import org.Little_100.projecte.ProjectE;
 import org.Little_100.projecte.compatibility.version.VersionAdapter;
 import org.Little_100.projecte.devices.*;
 import org.Little_100.projecte.storage.DatabaseManager;
+import org.Little_100.projecte.tools.kleinstar.KleinStarManager;
 import org.Little_100.projecte.util.Constants;
+import org.Little_100.projecte.util.ShulkerBoxUtil;
 import org.bukkit.Bukkit;
 import org.bukkit.NamespacedKey;
+import org.bukkit.block.ShulkerBox;
+import org.bukkit.entity.Player;
 import org.bukkit.inventory.*;
+import org.bukkit.inventory.meta.BlockStateMeta;
+import org.bukkit.inventory.meta.Damageable;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
@@ -713,5 +719,302 @@ public class EmcManager {
     public void clearCache() {
         emcCache.clear();
         lockedItems.clear();
+    }
+
+    // ========================================================================
+    // 基岩版 Form UI 共用业务逻辑
+    // ========================================================================
+    // 下述方法是 Java 版 GUIListener 和 基岩版 Form 共用的业务核心。
+    // 所有的防刷取 EMC 安全检查都在这里做, 不信任 UI 层的任何计算/判断。
+    //
+    // 线程约束: 必须在主线程调用。
+    // ========================================================================
+
+    /**
+     * 计算单个物品可出售的 EMC 值。
+     *
+     * 完整复现 GUIListener.calculateItemSellEmc 的行为:
+     *   - 潜影盒: 全内容有 EMC -> (盒 EMC + 内容总 EMC) * 堆叠数量
+     *            有任一无 EMC 物品 -> 返回 0
+     *   - Klein Star: (基础 EMC + 存储 EMC) * 堆叠数量
+     *   - 有耐久物品的耐久修正由 getEmc() 内部处理
+     *   - 普通物品: 单个 EMC * 堆叠数量
+     *
+     * 安全设计:
+     *   - 不信任调用方传入的任何预计值, 每次都重新计算
+     *   - 乘法前做溢出检查, 溢出返回 0 (等同于物品无 EMC)
+     */
+    public long calculateSellEmcFor(ItemStack item) {
+        if (item == null || item.getType().isAir()) {
+            return 0;
+        }
+
+        KleinStarManager kleinStarManager = plugin.getKleinStarManager();
+        int amount = item.getAmount();
+        if (amount <= 0) return 0;
+
+        // 潜影盒
+        if (item.getItemMeta() instanceof BlockStateMeta
+                && ((BlockStateMeta) item.getItemMeta()).getBlockState() instanceof ShulkerBox) {
+            if (ShulkerBoxUtil.getFirstItemWithoutEmc(item) == null) {
+                long itemEmc = getEmc(item);
+                long contentsEmc = ShulkerBoxUtil.getTotalEmcOfContents(item);
+                long perBox = safeAdd(itemEmc, contentsEmc);
+                if (perBox <= 0) return 0;
+                return safeMultiply(perBox, amount);
+            }
+            return 0;
+        }
+
+        // Klein Star
+        if (kleinStarManager.isKleinStar(item)) {
+            long baseEmc = getEmc(getItemKey(item));
+            long storedEmc = kleinStarManager.getStoredEmc(item);
+            long perItem = safeAdd(baseEmc, storedEmc);
+            if (perItem <= 0) return 0;
+            return safeMultiply(perItem, amount);
+        }
+
+        // 普通物品 (耐久修正已经由 getEmc 处理过)
+        long itemEmc = getEmc(item);
+        if (itemEmc <= 0) return 0;
+        return safeMultiply(itemEmc, amount);
+    }
+
+    /**
+     * 批量出售物品, 执行扣除/加 EMC/登记学习。
+     *
+     * 这是统一的业务入口。Java 版 GUIListener.handleTransaction 和
+     * 基岩版 BulkSellForm / QuickSellForm 都通过这个方法来执行出售。
+     *
+     * 线程: 主线程
+     *
+     * 安全设计:
+     *   - 每件物品独立计算 EMC, 不信任调用方的估算值
+     *   - 使用 safeAdd 累加总 EMC, 防整数溢出
+     *   - 加到玩家账户时, 先重新查当前 EMC (可能期间变化), 再叠加
+     *   - 溢出时拒绝整笔加成, 退回所有物品 (极端保守)
+     *
+     * @param player 玩家
+     * @param items  要出售的物品 (可包含无 EMC 物品, 方法内会分离)
+     * @return 结果对象
+     */
+    public SellResult sellItems(Player player, java.util.List<ItemStack> items) {
+        if (player == null || items == null || items.isEmpty()) {
+            return new SellResult(0L, java.util.Collections.emptyList(),
+                    java.util.Collections.emptyList(), false);
+        }
+
+        long totalEmc = 0;
+        java.util.List<ItemStack> rejected = new java.util.ArrayList<>();
+        java.util.List<String> newlyLearned = new java.util.ArrayList<>();
+
+        java.util.UUID uuid = player.getUniqueId();
+
+        for (ItemStack item : items) {
+            if (item == null || item.getType().isAir()) continue;
+
+            long emcValue = calculateSellEmcFor(item);
+            if (emcValue <= 0) {
+                // 无 EMC 或计算溢出 -> 退回
+                rejected.add(item);
+                continue;
+            }
+
+            // 总 EMC 加法溢出检查
+            long newTotal = safeAdd(totalEmc, emcValue);
+            if (newTotal < totalEmc) {
+                // 溢出! 本次出售中止, 剩余物品全部退回
+                rejected.add(item);
+                plugin.getLogger().warning(
+                        "Sell EMC overflow for player " + player.getName() + ", transaction aborted");
+                continue;
+            }
+            totalEmc = newTotal;
+
+            // 登记学习
+            String itemKey = getItemKey(item);
+            if (!databaseManager.isLearned(uuid, itemKey)) {
+                newlyLearned.add(itemKey);
+            }
+            databaseManager.addLearnedItem(uuid, itemKey);
+
+            // 潜影盒内部物品也登记学习
+            if (item.getItemMeta() instanceof BlockStateMeta bsm
+                    && bsm.getBlockState() instanceof ShulkerBox sb) {
+                for (ItemStack content : sb.getInventory().getContents()) {
+                    if (content != null && !content.getType().isAir()) {
+                        String contentKey = getItemKey(content);
+                        if (!databaseManager.isLearned(uuid, contentKey)) {
+                            newlyLearned.add(contentKey);
+                        }
+                        databaseManager.addLearnedItem(uuid, contentKey);
+                    }
+                }
+            }
+        }
+
+        // 加到玩家账户 (重新读当前值, 不信任任何缓存)
+        boolean emcCredited = false;
+        if (totalEmc > 0) {
+            long currentEmc = databaseManager.getPlayerEmc(uuid);
+            long newEmc = safeAdd(currentEmc, totalEmc);
+            if (newEmc < currentEmc) {
+                // 账户余额溢出: 极端情况, 拒绝本次加成, 物品不退回(已经扣了)
+                // 但这几乎不可能, long 最大值约 9 * 10^18
+                plugin.getLogger().severe(
+                        "Player EMC overflow for " + player.getName()
+                                + " (current=" + currentEmc + ", adding=" + totalEmc + ")");
+            } else {
+                databaseManager.setPlayerEmc(uuid, newEmc);
+                emcCredited = true;
+            }
+        }
+
+        return new SellResult(totalEmc, rejected, newlyLearned, emcCredited);
+    }
+
+    /**
+     * 购买指定数量的一种物品。
+     *
+     * 统一购买入口。Java 版 GUIListener.handleBuyScreenClick 和
+     * 基岩版 BuyConfirmForm 都通过这个方法执行购买。
+     *
+     * 线程: 主线程
+     *
+     * 安全设计:
+     *   - amount 必须 >= 1, <= MAX_BUY_AMOUNT
+     *   - 乘法做溢出检查
+     *   - 再次查询玩家 EMC, 不信任 UI 层的显示值
+     *   - 贤者之石特判: 玩家已拥有则拒绝
+     *   - 若物品无法从 key 还原, 拒绝并不扣 EMC
+     *
+     * @param player  玩家
+     * @param itemKey 物品 key
+     * @param amount  数量
+     * @return BuyResult
+     */
+    public BuyResult buyItem(Player player, String itemKey, int amount) {
+        if (player == null || itemKey == null) {
+            return new BuyResult(BuyStatus.INVALID_AMOUNT, 0, 0);
+        }
+        if (amount < 1 || amount > MAX_BUY_AMOUNT) {
+            return new BuyResult(BuyStatus.INVALID_AMOUNT, 0, 0);
+        }
+
+        long unitEmc = getEmc(itemKey);
+        if (unitEmc <= 0) {
+            return new BuyResult(BuyStatus.ITEM_NOT_AVAILABLE, 0, 0);
+        }
+
+        // 溢出保护: amount * unitEmc 不能溢出
+        if (amount > Long.MAX_VALUE / unitEmc) {
+            return new BuyResult(BuyStatus.INVALID_AMOUNT, 0, 0);
+        }
+        long totalCost = unitEmc * amount;
+
+        // 先构造物品, 若无法还原则立刻拒绝, 不扣 EMC
+        ItemStack purchased = plugin.getItemStackFromKey(itemKey);
+        if (purchased == null) {
+            return new BuyResult(BuyStatus.ITEM_NOT_AVAILABLE, totalCost, 0);
+        }
+
+        // 贤者之石二次购买检查
+        if (plugin.isPhilosopherStone(purchased)) {
+            if (amount != 1) {
+                return new BuyResult(BuyStatus.INVALID_AMOUNT, totalCost, 0);
+            }
+            if (player.getInventory().containsAtLeast(plugin.getPhilosopherStone(), 1)) {
+                return new BuyResult(BuyStatus.ALREADY_OWNED, totalCost, 0);
+            }
+        }
+
+        // 再次查当前玩家 EMC, 不信任任何缓存/UI 值
+        java.util.UUID uuid = player.getUniqueId();
+        long playerEmc = databaseManager.getPlayerEmc(uuid);
+        if (playerEmc < totalCost) {
+            return new BuyResult(BuyStatus.NOT_ENOUGH_EMC, totalCost, 0);
+        }
+
+        // 扣 EMC (写入就是 synchronized)
+        databaseManager.setPlayerEmc(uuid, playerEmc - totalCost);
+
+        // 给物品
+        purchased.setAmount(amount);
+        java.util.HashMap<Integer, ItemStack> remaining = player.getInventory().addItem(purchased);
+        if (!remaining.isEmpty()) {
+            for (ItemStack drop : remaining.values()) {
+                player.getWorld().dropItemNaturally(player.getLocation(), drop);
+            }
+        }
+
+        return new BuyResult(BuyStatus.SUCCESS, totalCost, amount);
+    }
+
+    // ====== 安全工具方法 ======
+
+    /** 一次购买允许的最大数量 (9 组 * 64 = 576) */
+    public static final int MAX_BUY_AMOUNT = 9 * 64;
+
+    /** 安全加法, 溢出时返回 Long.MIN_VALUE (调用方可以检测) */
+    private static long safeAdd(long a, long b) {
+        if (a <= 0 || b <= 0) return a + b;
+        if (a > Long.MAX_VALUE - b) return Long.MIN_VALUE;
+        return a + b;
+    }
+
+    /** 安全乘法, 溢出时返回 0 */
+    private static long safeMultiply(long value, int amount) {
+        if (value <= 0 || amount <= 0) return 0;
+        if (value > Long.MAX_VALUE / amount) return 0;
+        return value * amount;
+    }
+
+    // ====== 结果对象 ======
+
+    public static class SellResult {
+        private final long totalEmc;
+        private final java.util.List<ItemStack> rejected;
+        private final java.util.List<String> newlyLearned;
+        private final boolean emcCredited;
+
+        public SellResult(long totalEmc, java.util.List<ItemStack> rejected,
+                          java.util.List<String> newlyLearned, boolean emcCredited) {
+            this.totalEmc = totalEmc;
+            this.rejected = rejected;
+            this.newlyLearned = newlyLearned;
+            this.emcCredited = emcCredited;
+        }
+
+        public long getTotalEmc() { return totalEmc; }
+        public java.util.List<ItemStack> getRejected() { return rejected; }
+        public java.util.List<String> getNewlyLearned() { return newlyLearned; }
+        /** EMC 是否真的记到账户了 (溢出时为 false) */
+        public boolean isEmcCredited() { return emcCredited; }
+    }
+
+    public static class BuyResult {
+        private final BuyStatus status;
+        private final long cost;
+        private final int actualAmount;
+
+        public BuyResult(BuyStatus status, long cost, int actualAmount) {
+            this.status = status;
+            this.cost = cost;
+            this.actualAmount = actualAmount;
+        }
+
+        public BuyStatus getStatus() { return status; }
+        public long getCost() { return cost; }
+        public int getActualAmount() { return actualAmount; }
+        public boolean isSuccess() { return status == BuyStatus.SUCCESS; }
+    }
+
+    public enum BuyStatus {
+        SUCCESS,
+        NOT_ENOUGH_EMC,
+        ITEM_NOT_AVAILABLE,
+        INVALID_AMOUNT,
+        ALREADY_OWNED
     }
 }

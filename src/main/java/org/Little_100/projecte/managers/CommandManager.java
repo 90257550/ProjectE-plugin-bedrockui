@@ -259,6 +259,13 @@ public class CommandManager implements CommandExecutor, TabCompleter {
             return;
         }
 
+        // 基岩版玩家走 Form UI, Java 版玩家走原 Inventory GUI
+        // Geyser 未装或玩家是 Java 版时, isBedrockPlayer 返回 false, 自然走原路径
+        if (org.Little_100.projecte.bedrock.BedrockFormUtil.isBedrockPlayer(player)) {
+            org.Little_100.projecte.bedrock.transmutation.TransmutationMainForm.open(player);
+            return;
+        }
+
         new TransmutationGUI(player).open();
     }
 
